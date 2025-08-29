@@ -1,4 +1,4 @@
-name = "highest-worker"
+name = "highest"
 main = "src/worker.js"
 compatibility_date = "2024-08-15"
 
@@ -11,4 +11,3 @@ compatibility_date = "2024-08-15"
 [vars]
 # Toggle mock mode for testing without upstream calls
 MOCK_AI = "0"
-
