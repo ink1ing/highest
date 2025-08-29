@@ -2,11 +2,15 @@ name = "highest"
 main = "src/worker.js"
 compatibility_date = "2024-08-15"
 
-# Uncomment and set your account and routes when deploying
-# account_id = "YOUR_ACCOUNT_ID"
-# routes = [
-#   { pattern = "api.your-domain.com/api/*", zone_name = "your-domain.com" }
-# ]
+# Cloudflare account
+account_id = "3bc7426bd16f8f8787fa5bc1b01b5715"
+
+# Deploy to workers.dev (no zone routes configured here)
+# If你之后需要绑定自有域名，请添加 routes 并移除/保留该注释
+# routes = [{ pattern = "your-domain.com/api/*", zone_name = "your-domain.com" }]
+
+[placement]
+mode = "smart"
 
 [vars]
 # Toggle mock mode for testing without upstream calls
