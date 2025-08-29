@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>原始版：旋转六边形与四Logo小球</title>
+    <!--
+      设计要点（原始版本）
+      - 旋转正六边形容器：以恒定角速度旋转。
+      - 四个“Logo小球”：OpenAI / Claude / DeepSeek / Gemini，具有重力、弹性、摩擦与自旋耦合；进行球-壁与球-球碰撞。
+      - 壁面速度：考虑六边形旋转导致的壁面切向速度，碰撞时计算相对速度。
+      - 拖拽交互：鼠标/触控拖拽通过“弹簧力”实现，产生线性与角向效果（扭矩）。
+      - 自适应尺寸：随窗口变化实时调整画布与六边形半径（与视口最小边成比例）。
+      - 无 UI：无控制面板、无预设、无主题切换、无点击跳转与“推推推”加速功能。
+    -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #0d1117; color: #c9d1d9; }
+      canvas { width: 100%; height: 100%; display: block; }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <script>
+      // ---------- 数学与向量助手 ----------
+      const TAU = Math.PI * 2;
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const vec = (x=0, y=0) => ({ x, y });
+      const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+      const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+      const mul = (a, s) => ({ x: a.x * s, y: a.y * s });
+      const dot = (a, b) => a.x * b.x + a.y * b.y;
+      const len = (a) => Math.hypot(a.x, a.y);
+      const norm = (a) => { const L = len(a) || 1; return { x: a.x / L, y: a.y / L }; };
+      const perp = (a) => ({ x: -a.y, y: a.x });
+      const cross2 = (a, b) => a.x * b.y - a.y * b.x; // 2D cross -> scalar
+      const crossSV = (s, v) => ({ x: -s * v.y, y: s * v.x }); // s(omega) x v
+      const rot = (v, ang) => { const c = Math.cos(ang), s = Math.sin(ang); return { x: v.x * c - v.y * s, y: v.x * s + v.y * c }; };
+
+      function closestPointOnSegment(p, a, b) {
+        const ab = sub(b, a);
+        const t = clamp(dot(sub(p, a), ab) / (dot(ab, ab) || 1), 0, 1);
+        return add(a, mul(ab, t));
+      }
+      function hexagonPoints(center, R, angle) {
+        const pts = [];
+        for (let i = 0; i < 6; i++) {
+          const a = angle + i * TAU / 6;
+          pts.push({ x: center.x + R * Math.cos(a), y: center.y + R * Math.sin(a) });
+        }
+        return pts;
+      }
+
+      // ---------- 状态 ----------
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const state = {
+        dpr: Math.max(1, window.devicePixelRatio || 1),
+        w: 0,
+        h: 0,
+        center: vec(),
+        hexR: 200,
+        hexAngle: 0,
+        hexOmega: 0.5,   // 六边形角速度（rad/s）
+        gravity: 600,    // 重力（px/s^2）
+        balls: [],
+        mouse: { x: 0, y: 0, vx: 0, vy: 0, down: false, t: performance.now()/1000 },
+        grab: null,      // { ball, rLocal }
+        mouseSpringK: 7000,
+        mouseDamping: 7000 * 0.085,
+      };
+
+      function resize() {
+        const { clientWidth, clientHeight } = canvas;
+        state.dpr = Math.max(1, window.devicePixelRatio || 1);
+        canvas.width = Math.floor(clientWidth * state.dpr);
+        canvas.height = Math.floor(clientHeight * state.dpr);
+        state.w = canvas.width / state.dpr;
+        state.h = canvas.height / state.dpr;
+        ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+        state.center = vec(state.w / 2, state.h / 2);
+        state.hexR = Math.max(140, Math.min(state.w, state.h) * 0.33);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      // ---------- 物体 ----------
+      // 静态 PNG 图标（dark 方案），来自 @lobehub/icons 的静态资源
+      const ICON_SOURCES = {
+        openai: [
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/openai.png',
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/light/openai.png',
+        ],
+        claude: [
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/claude-color.png',
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/claude.png',
+        ],
+        deepseek: [
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/deepseek-color.png',
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/deepseek.png',
+        ],
+        gemini: [
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/gemini-color.png',
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/gemini.png',
+        ],
+      };
+
+      function loadIconSequence(urls, assign) {
+        if (!urls || urls.length === 0) return;
+        const tryLoad = (i) => {
+          if (i >= urls.length) return;
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => assign(img);
+          img.onerror = () => tryLoad(i + 1);
+          img.src = urls[i];
+        };
+        tryLoad(0);
+      }
+
+      class Ball {
+        constructor({ x, y, r=28, iconKey='openai', colorA='#6cf', colorB='#acf' }) {
+          this.p = vec(x, y);
+          this.v = vec(0, 0);
+          this.r = r;
+          this.m = r * r * 0.02 + 1;           // 质量（简化）
+          this.I = 0.5 * this.m * this.r * this.r; // 实心圆转动惯量
+          this.omega = 0;                       // 角速度
+          this.theta = Math.random() * TAU;     // 朝向
+          this.colorA = colorA;                 // 备用：未加载贴图时的渐变底色
+          this.colorB = colorB;
+          this.iconKey = iconKey;
+          this.img = null;
+        }
+      }
+
+      function initBalls() {
+        const R = state.hexR * 0.50;
+        state.balls = [
+          new Ball({ iconKey:'openai',  x: state.center.x - R * 0.6, y: state.center.y - R * 0.15, r: 28, colorA:'#7cf', colorB:'#acf' }),
+          new Ball({ iconKey:'claude',  x: state.center.x + R * 0.55, y: state.center.y - R * 0.25, r: 28, colorA:'#fa7', colorB:'#fdc' }),
+          new Ball({ iconKey:'deepseek',x: state.center.x - R * 0.15, y: state.center.y + R * 0.55, r: 28, colorA:'#9f7', colorB:'#cdf' }),
+          new Ball({ iconKey:'gemini',  x: state.center.x + R * 0.45, y: state.center.y + R * 0.2,  r: 28, colorA:'#9cf', colorB:'#def' }),
+        ];
+        const initV = [vec(80, -20), vec(-60, 0), vec(40, -30), vec(-10, 50)];
+        for (let i = 0; i < state.balls.length; i++) state.balls[i].v = initV[i % initV.length];
+        // 加载图标
+        for (const b of state.balls) {
+          const srcs = ICON_SOURCES[b.iconKey] || [];
+          loadIconSequence(srcs, (img) => { b.img = img; });
+        }
+      }
+      initBalls();
+
+      // ---------- 参数 ----------
+      const params = {
+        eWall: 0.99,
+        eBall: 0.98,
+        muWall: 0.28,
+        muBall: 0.10,
+        linDrag: 0.01,
+        angDrag: 0.08,
+        positionSlop: 0.01,
+      };
+
+      // ---------- 力与碰撞 ----------
+      function integrateForces(dt) {
+        const g = state.gravity;
+        const drag = Math.exp(-params.linDrag * dt);
+        const adrag = Math.exp(-params.angDrag * dt);
+        for (const b of state.balls) {
+          b.v.y += g * dt; // 重力
+          b.v.x *= drag;
+          b.v.y *= drag;
+          b.omega *= adrag;
+        }
+        // 拖拽弹簧力
+        if (state.grab && state.grab.ball) {
+          const b = state.grab.ball;
+          const rWorld = rot(state.grab.rLocal, b.theta);
+          const anchor = add(b.p, rWorld);
+          const vAnchor = add(b.v, crossSV(b.omega, rWorld));
+          const mouse = state.mouse;
+          const k = state.mouseSpringK;
+          const c = state.mouseDamping;
+          const maxF = 20000;
+          const dx = sub(vec(mouse.x, mouse.y), anchor);
+          const dv = sub(vec(mouse.vx, mouse.vy), vAnchor);
+          let Fx = k * dx.x + c * dv.x;
+          let Fy = k * dx.y + c * dv.y;
+          const mag = Math.hypot(Fx, Fy);
+          if (mag > maxF) { Fx *= maxF / mag; Fy *= maxF / mag; }
+          b.v.x += (Fx / b.m) * dt;
+          b.v.y += (Fy / b.m) * dt;
+          const torque = rWorld.x * Fy - rWorld.y * Fx;
+          b.omega += (torque / b.I) * dt;
+        }
+      }
+
+      function edgesOfHex(center, R, angle) {
+        const pts = hexagonPoints(center, R, angle);
+        const edges = [];
+        for (let i = 0; i < 6; i++) edges.push([pts[i], pts[(i + 1) % 6]]);
+        return edges;
+      }
+
+      function collideBallWithHex(b, edges) {
+        const c = state.center;
+        const w = state.hexOmega; // 六边形角速度
+        for (const [a, d] of edges) {
+          const cp = closestPointOnSegment(b.p, a, d);
+          let n = sub(b.p, cp);
+          let dist = len(n);
+          if (dist < b.r) {
+            if (dist < 1e-6) { n = norm(sub(b.p, c)); dist = 1e-6; } else { n = mul(n, 1 / dist); }
+            const penetration = b.r - dist;
+            b.p = add(b.p, mul(n, penetration + params.positionSlop));
+
+            const rWorld = sub(cp, c);
+            const vWall = crossSV(w, rWorld);
+
+            const rBall = mul(n, -b.r);
+            const vBallContact = add(b.v, crossSV(b.omega, rBall));
+            const vRel = sub(vBallContact, vWall);
+
+            const vn = dot(vRel, n);
+            let jnApplied = 0;
+            if (vn < 0) {
+              const jn = -(1 + params.eWall) * vn / (1 / b.m);
+              b.v = add(b.v, mul(n, jn / b.m));
+              jnApplied = Math.abs(jn);
+            }
+
+            const t = perp(n);
+            const vt = dot(vRel, t);
+            const rCrossT = cross2(rBall, t);
+            const denomT = (1 / b.m) + (rCrossT * rCrossT) / b.I;
+            let jt = -vt / denomT;
+            const maxF = jnApplied * params.muWall;
+            jt = clamp(jt, -maxF, maxF);
+            b.v = add(b.v, mul(t, jt / b.m));
+            const torque = cross2(rBall, mul(t, jt));
+            b.omega += torque / b.I;
+          }
+        }
+      }
+
+      function collideBallsPair(b1, b2) {
+        const delta = sub(b2.p, b1.p);
+        const dist = len(delta);
+        const minDist = b1.r + b2.r;
+        if (dist === 0) return;
+        if (dist < minDist) {
+          const n = mul(delta, 1 / dist);
+          const penetration = minDist - dist;
+          const totalInvM = 1 / b1.m + 1 / b2.m;
+          const corr1 = (1 / b1.m) / totalInvM * penetration;
+          const corr2 = (1 / b2.m) / totalInvM * penetration;
+          b1.p = add(b1.p, mul(n, -corr1));
+          b2.p = add(b2.p, mul(n, +corr2));
+
+          const r1 = mul(n, +b1.r);
+          const r2 = mul(n, -b2.r);
+          const v1c = add(b1.v, crossSV(b1.omega, r1));
+          const v2c = add(b2.v, crossSV(b2.omega, r2));
+          const vRel = sub(v2c, v1c);
+
+          const vn = dot(vRel, n);
+          if (vn < 0) {
+            const invMass = (1 / b1.m) + (1 / b2.m);
+            const jn = -(1 + params.eBall) * vn / invMass;
+            const impulseN = mul(n, jn);
+            b1.v = add(b1.v, mul(impulseN, -1 / b1.m));
+            b2.v = add(b2.v, mul(impulseN, +1 / b2.m));
+          }
+
+          const t = perp(n);
+          const vt = dot(sub(b2.v, b1.v), t) + (-b2.omega * b2.r - b1.omega * b1.r);
+          const denomT = (1 / b1.m) + (1 / b2.m) + (b1.r * b1.r) / b1.I + (b2.r * b2.r) / b2.I;
+          let jt = -vt / denomT;
+          const approxJn = Math.abs((1 + params.eBall) * vn / ((1 / b1.m) + (1 / b2.m)));
+          const maxJt = approxJn * params.muBall;
+          jt = clamp(jt, -maxJt, maxJt);
+          const impulseT = mul(t, jt);
+          b1.v = add(b1.v, mul(impulseT, -1 / b1.m));
+          b2.v = add(b2.v, mul(impulseT, +1 / b2.m));
+          b1.omega += cross2(r1, mul(impulseT, -1)) / b1.I;
+          b2.omega += cross2(r2, mul(impulseT, +1)) / b2.I;
+        }
+      }
+
+      function step(dt) {
+        dt = Math.min(dt, 1 / 60);
+        state.hexAngle += state.hexOmega * dt;
+        integrateForces(dt);
+        for (const b of state.balls) {
+          b.p = add(b.p, mul(b.v, dt));
+          b.theta += b.omega * dt;
+        }
+        const edges = edgesOfHex(state.center, state.hexR, state.hexAngle);
+        for (const b of state.balls) collideBallWithHex(b, edges);
+        for (let i = 0; i < state.balls.length; i++)
+          for (let j = i + 1; j < state.balls.length; j++)
+            collideBallsPair(state.balls[i], state.balls[j]);
+      }
+
+      // ---------- 绘制 ----------
+      function drawHexagon(center, R, angle) {
+        const pts = hexagonPoints(center, R, angle);
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(center.x - R, center.y - R, center.x + R, center.y + R);
+        grad.addColorStop(0, 'rgba(40,60,120,0.25)');
+        grad.addColorStop(1, 'rgba(120,40,180,0.15)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(180,200,255,0.6)';
+        ctx.stroke();
+        ctx.save();
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = 'rgba(120,180,255,0.35)';
+        ctx.strokeStyle = 'rgba(120,180,255,0.3)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawBall(b) {
+        ctx.save();
+        ctx.translate(b.p.x, b.p.y);
+        // 用贴图绘制；若贴图未就绪，则用渐变球做占位
+        if (b.img && b.img.complete && b.img.naturalWidth > 0) {
+          ctx.save();
+          ctx.rotate(b.theta);
+          const side = Math.max(2*b.r, 12); // 目标尺寸≈56px，r=28
+          ctx.drawImage(b.img, -side/2, -side/2, side, side);
+          ctx.restore();
+        } else {
+          ctx.rotate(b.theta);
+          const rg = ctx.createRadialGradient(-b.r*0.3, -b.r*0.3, b.r*0.2, 0, 0, b.r);
+          rg.addColorStop(0, b.colorB);
+          rg.addColorStop(1, b.colorA);
+          ctx.fillStyle = rg;
+          ctx.beginPath();
+          ctx.arc(0, 0, b.r, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      function render() {
+        ctx.clearRect(0, 0, state.w, state.h);
+        // 背景网格（微弱）
+        ctx.save();
+        ctx.globalAlpha = 0.12;
+        const grid = 36;
+        ctx.strokeStyle = '#1a223a';
+        ctx.lineWidth = 1;
+        for (let x = (state.center.x % grid); x < state.w; x += grid) {
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, state.h); ctx.stroke();
+        }
+        for (let y = (state.center.y % grid); y < state.h; y += grid) {
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(state.w, y); ctx.stroke();
+        }
+        ctx.restore();
+
+        drawHexagon(state.center, state.hexR, state.hexAngle);
+        for (const b of state.balls) drawBall(b);
+      }
+
+      // ---------- 动画循环 ----------
+      let last = performance.now();
+      function tick(now) {
+        const dt = (now - last) / 1000; last = now;
+        step(dt);
+        render();
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+
+      // ---------- 交互：鼠标/触控拖拽 ----------
+      function pickBallAt(pos) {
+        let best = null, bestDist = Infinity;
+        for (const b of state.balls) {
+          const d = Math.hypot(pos.x - b.p.x, pos.y - b.p.y);
+          if (d <= b.r * 1.1 && d < bestDist) { best = b; bestDist = d; }
+        }
+        return best;
+      }
+      function onPointerDown(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        state.mouse.down = true;
+        state.mouse.x = x; state.mouse.y = y; state.mouse.vx = 0; state.mouse.vy = 0; state.mouse.t = performance.now() / 1000;
+        const b = pickBallAt({ x, y });
+        if (b) {
+          const rWorld = sub({ x, y }, b.p);
+          const rLocal = rot(rWorld, -b.theta);
+          state.grab = { ball: b, rLocal };
+          try { canvas.setPointerCapture(e.pointerId); } catch {}
+        }
+      }
+      function onPointerMove(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const t = performance.now() / 1000;
+        const dt = Math.max(1e-3, t - state.mouse.t);
+        state.mouse.vx = (x - state.mouse.x) / dt;
+        state.mouse.vy = (y - state.mouse.y) / dt;
+        state.mouse.x = x; state.mouse.y = y; state.mouse.t = t;
+      }
+      function onPointerUp(e) {
+        state.mouse.down = false;
+        state.grab = null;
+        try { canvas.releasePointerCapture(e.pointerId); } catch {}
+      }
+      canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
+      canvas.addEventListener('pointermove', onPointerMove, { passive: true });
+      canvas.addEventListener('pointerup', onPointerUp, { passive: true });
+      canvas.addEventListener('pointercancel', onPointerUp, { passive: true });
+    </script>
+  </body>
+  </html>

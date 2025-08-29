@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Highest</title>
+    <style>
+      /* Theme palettes per design.md */
+      :root {
+        --radius: 12px; --gap: 12px; --fs: 16px; --sidebar-w: 260px;
+        --field-w: 360px;
+        /* dark (github) */
+        --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --subtext:#8b949e; --accent:#1f6feb; --success:#238636;
+        --panel-blur: none;
+      }
+      html[data-theme="light"] {
+        /* glassLight */
+        --bg:#e9ecf1; --panel:rgba(250,250,250,0.7); --border:rgba(220,220,220,0.8); --text:#111827; --subtext:#4b5563; --accent:#0a84ff; --success:#34c759;
+        --panel-blur: blur(10px);
+      }
+      html, body { height: 100%; }
+      body { margin:0; background:var(--bg); color:var(--text); font: var(--fs)/1.65 -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+
+      /* Shell layout */
+      .shell { display:grid; grid-template-columns: var(--sidebar-w) 1fr; height:100%; transition: grid-template-columns .22s ease; }
+      .shell.collapsed { grid-template-columns: 0 1fr; }
+      aside#sidebar { border-right:1px solid var(--border); background:var(--panel); backdrop-filter: var(--panel-blur); overflow:auto; min-width:0; }
+      main#main { position:relative; overflow:hidden; }
+
+      /* Panels and common */
+      .panel { background:var(--panel); border:1px solid var(--border); border-radius: var(--radius); backdrop-filter: var(--panel-blur); }
+      .bar { background:var(--panel); border-bottom:1px solid var(--border); }
+      .bar-bottom { background:var(--panel); border-top:1px solid var(--border); }
+      .row { display:flex; align-items:center; gap: var(--gap); }
+      .spacer { flex:1; }
+      .muted { color: var(--subtext); }
+
+      /* Buttons */
+      button { cursor:pointer; color:var(--text); }
+      .btn { padding: 10px 14px; border:1px solid var(--border); background:#21262d; border-radius: var(--radius); }
+      html[data-theme="light"] .btn { background: rgba(255,255,255,0.9); }
+      .btn.icon { width:48px; height:48px; display:grid; place-items:center; border-radius: 14px; }
+      .btn.icon.sm { width:36px; height:36px; border-radius: 12px; }
+      .btn.ghost { background: transparent; }
+      .btn.ghost:hover { background: rgba(255,255,255,0.06); }
+      html[data-theme="light"] .btn.ghost:hover { background: rgba(0,0,0,0.04); }
+      .btn.small { width:32px; height:32px; padding:0; border-radius:10px; }
+
+      /* Inputs */
+      input, select, textarea { color:var(--text); background:#21262d; border:1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; font-size:1rem; }
+      html[data-theme="light"] input, html[data-theme="light"] select, html[data-theme="light"] textarea { background: rgba(255,255,255,0.9); }
+      textarea { width:100%; min-height:56px; max-height:220px; resize: vertical; }
+
+      /* Sidebar */
+      .sidebar-head { position:sticky; top:0; z-index:5; padding: 10px 12px; }
+      .brand { display:flex; flex-direction: column; }
+      .brand .sub { font-size:12px; }
+      .sessions { padding:8px; }
+      .session { display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--border); border-radius: 12px; margin-bottom:8px; background:var(--panel); }
+      .session.active { outline: 1px solid var(--accent); }
+      .session .t { flex:1; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .session .d { font-size:12px; opacity:.75; }
+      .session .act button { background:none; border:none; opacity:.8; padding:6px; }
+      .session .act button:hover { opacity:1; }
+      /* Make 新建会话 button same width as session cards */
+      #btnNew { display:block; width:100%; }
+
+      /* Top bar & content */
+      .topbar { position:sticky; top:0; z-index:10; padding:10px 14px; }
+      .content-wrap { position:absolute; inset:0; padding-top:56px; padding-bottom:112px; }
+      .messages { height:100%; overflow:auto; padding: 18px 24px; }
+      .bubble { max-width: 960px; padding: 14px; border:1px solid var(--border); border-radius: 14px; background:var(--panel); white-space: pre-wrap; line-height: 1.8; }
+      .line { margin: 10px 0; }
+      .line.user { display:flex; justify-content:flex-end; }
+      .line.assistant { display:flex; justify-content:flex-start; }
+      .meta { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:12px; opacity:.8; }
+      .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid var(--border); }
+      .badge.user { background:#21262d; }
+      html[data-theme="light"] .badge.user { background:rgba(255,255,255,0.8); }
+      .badge.assistant { background: rgba(31,111,235,0.15); }
+
+      /* Bottom input bar */
+      .inputbar { position:absolute; left:0; right:0; bottom:0; padding: 10px 14px; }
+      .input-inner { max-width: 1000px; margin: 0 auto; }
+
+      @media (max-width: 860px) {
+        :root { --sidebar-w: 68vw; }
+      }
+
+      /* Dialog */
+      .overlay { position:fixed; inset:0; background: rgba(0,0,0,0.45); display:none; align-items:center; justify-content:center; z-index:50; }
+      .overlay.open { display:flex; }
+      .dialog { width: min(92vw, 520px); padding:16px; box-shadow: 0 16px 40px rgba(0,0,0,0.35); }
+      .dialog .title { font-weight:700; margin-bottom:8px; }
+      .space-y > * + * { margin-top: 12px; }
+      .link { color: var(--accent); text-decoration: underline; font-size:12px; }
+      .dialog .field { display:flex; flex-direction: column; gap:6px; align-items:flex-start; }
+      .dialog .field input, .dialog .field select { width: var(--field-w); max-width: 100%; }
+      @media (max-width: 560px) {
+        :root { --field-w: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell collapsed" id="shell">
+      <!-- Sidebar -->
+      <aside id="sidebar">
+        <div class="sidebar-head bar">
+          <div class="row">
+            <div class="brand">
+              <div class="row" style="gap:8px">
+                <div style="width:24px;height:24px;display:grid;place-items:center">
+                  <img id="brandLogo" alt="DeepSeek" style="width:100%;height:100%;object-fit:contain;display:block" />
+                </div>
+                <strong>Highest</strong>
+              </div>
+              <span class="muted sub" id="brandSub">Provide by Wisdom Gate</span>
+            </div>
+            <div class="spacer"></div>
+            <button id="btnCloseSidebar" class="btn icon sm ghost" title="收起">◀</button>
+          </div>
+        </div>
+        <div class="sessions">
+          <button id="btnNew" class="btn" style="border-radius:10px">＋ 新建会话</button>
+        </div>
+        <div id="sessions" class="sessions"></div>
+      </aside>
+
+      <!-- Main -->
+      <main id="main">
+        <div class="topbar bar">
+          <div class="row">
+            <button id="btnOpenSidebar" class="btn icon sm ghost" title="展开" style="display:none">☰</button>
+            
+            <div class="spacer"></div>
+            <span id="modelDisplay" class="badge muted" style="white-space:nowrap; max-width: 40vw; overflow:hidden; text-overflow:ellipsis;"></span>
+            <button id="btnSettings" class="btn icon" title="设置">⚙️</button>
+            <button id="btnTheme" class="btn icon" title="切换主题">🌙</button>
+            <button id="btnLang" class="btn icon" title="语言">中</button>
+          </div>
+        </div>
+        <div class="content-wrap">
+          <div id="list" class="messages"></div>
+        </div>
+        <div class="inputbar bar-bottom">
+          <div class="input-inner">
+            <div class="row">
+              <button id="btnSettings2" class="btn icon" title="设置">⚙️</button>
+              <textarea id="input" placeholder="输入你的问题，Ctrl/Cmd + Enter 发送…"></textarea>
+              <button id="send" class="btn icon" title="发送">➤</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Settings Dialog -->
+    <div id="overlay" class="overlay">
+      <div class="dialog panel">
+        <div id="dlgTitle" class="title">接口设置</div>
+        <div class="space-y">
+          <div class="field">
+            <label id="lblApiKey" class="muted" style="font-size:12px">API Key</label>
+            <input id="apiKey" type="password" placeholder="sk-..." />
+          </div>
+          <div class="field">
+            <label id="lblModel" class="muted" style="font-size:12px">选择模型</label>
+            <select id="model"></select>
+          </div>
+          <a class="link" href="https://wisdom-gate.juheapi.com?i=4n2K" target="_blank" rel="noreferrer">Get 5,000,000 Tokens for Free!</a>
+        </div>
+        <div class="row" style="justify-content:flex-end; margin-top:16px; gap:8px;">
+          <button id="btnCloseDialog" class="btn">完成</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const modelList = [
+        "wisdom-ai-gpt5 (via Gpt5)",
+        "wisdom-ai-gpt5-mini (via Gpt5 Mini)",
+        "wisdom-ai-gpt5-nano (via Gpt5 Nano)",
+        "wisdom-ai-dsv3 (via DeepseekV3)",
+        "wisdom-ai-dsr1 (via DeepseekR1)",
+        "wisdom-ai-claude-sonnet-4 (via Claude Sonnet 4)",
+        "wisdom-ai-gemini-2.5-flash (via Gemini 2.5 Flash)",
+      ];
+      // Elements
+      const elShell = document.getElementById('shell');
+      const elSidebar = document.getElementById('sidebar');
+      const elBtnCloseSidebar = document.getElementById('btnCloseSidebar');
+      const elBtnOpenSidebar = document.getElementById('btnOpenSidebar');
+      const elBtnSettings = document.getElementById('btnSettings');
+      const elBtnSettings2 = document.getElementById('btnSettings2');
+      const elBtnTheme = document.getElementById('btnTheme');
+      const elBtnLang = document.getElementById('btnLang');
+      const elSessions = document.getElementById('sessions');
+      const elBtnNew = document.getElementById('btnNew');
+      const elList = document.getElementById('list');
+      const elInput = document.getElementById('input');
+      const elSend = document.getElementById('send');
+      const elBrandLogo = document.getElementById('brandLogo');
+      const elOverlay = document.getElementById('overlay');
+      const elApiKey = document.getElementById('apiKey');
+      const elModel = document.getElementById('model');
+      const elBtnCloseDialog = document.getElementById('btnCloseDialog');
+      const elModelDisplay = document.getElementById('modelDisplay');
+
+      // Brand logo: load with the same URL-fallback pattern used by ball icons
+      (function initBrandLogo(){
+        if (!elBrandLogo) return;
+        const urls = [
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/deepseek-color.png',
+          'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/deepseek.png',
+        ];
+        function loadIconSequence(urls, assign) {
+          if (!urls || !urls.length) return;
+          const tryLoad = (i) => {
+            if (i >= urls.length) return;
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => assign(img);
+            img.onerror = () => tryLoad(i + 1);
+            img.src = urls[i];
+          };
+          tryLoad(0);
+        }
+        loadIconSequence(urls, (img) => { try { elBrandLogo.src = img.src; } catch {} });
+      })();
+
+      // i18n
+      const i18n = {
+        zh: {
+          chat: '对话', newChat: '新建会话', settings: '设置', theme: '切换主题', language: '语言',
+          apiKey: 'API Key', chooseModel: '选择模型', done: '完成',
+          placeholder: '输入你的问题，Ctrl/Cmd + Enter 发送…',
+          you: '你', assistant: '助手', rename: '重命名', del: '删除',
+          confirmDelete: '确定删除该会话？', renamePrompt: '重命名会话',
+          startTitle: '开始你的对话', startSubtitle: '在下方输入问题，或从左侧选择历史会话。',
+          needKey: '请先在设置中填写 API Key',
+          thinking: '正在思考…', netFail: '请求失败：无法连接到后端服务。请确认已运行 npm run dev，并使用 http://localhost:8787 打开页面。',
+          reqFail: '请求失败：',
+          openSidebar: '展开', closeSidebar: '收起'
+        },
+        en: {
+          chat: 'Chat', newChat: 'New Chat', settings: 'Settings', theme: 'Theme', language: 'Language',
+          apiKey: 'API Key', chooseModel: 'Model', done: 'Done',
+          placeholder: 'Type your message, Ctrl/Cmd + Enter to send…',
+          you: 'You', assistant: 'Assistant', rename: 'Rename', del: 'Delete',
+          confirmDelete: 'Delete this chat?', renamePrompt: 'Rename chat',
+          startTitle: 'Start your conversation', startSubtitle: 'Type below or pick a thread from the left.',
+          needKey: 'Please set your API Key in Settings first',
+          thinking: 'Thinking…', netFail: 'Request failed: cannot reach backend. Ensure npm run dev is running and open http://localhost:8787.',
+          reqFail: 'Request failed: ',
+          openSidebar: 'Open', closeSidebar: 'Collapse'
+        }
+      };
+      let curLang = (function(){ try { const v = localStorage.getItem('ui.lang'); return v ? JSON.parse(v) : 'zh'; } catch { return 'zh'; } })();
+      function tr(k){ return (i18n[curLang] && i18n[curLang][k]) || k; }
+      function applyLang(){
+        const elTitle = document.getElementById('titleChat'); if (elTitle) elTitle.textContent = tr('chat');
+        const elTxt = document.getElementById('input'); if (elTxt) elTxt.placeholder = tr('placeholder');
+        const elNew = document.getElementById('btnNew'); if (elNew) elNew.textContent = '＋ ' + tr('newChat');
+        const b1 = document.getElementById('btnSettings'); if (b1) b1.title = tr('settings');
+        const b2 = document.getElementById('btnSettings2'); if (b2) b2.title = tr('settings');
+        const b3 = document.getElementById('btnTheme'); if (b3) b3.title = tr('theme');
+        const b4 = document.getElementById('btnLang'); if (b4) { b4.title = tr('language'); b4.textContent = (curLang === 'zh') ? '中' : 'EN'; }
+        const b5 = document.getElementById('btnOpenSidebar'); if (b5) b5.title = tr('openSidebar');
+        const b6 = document.getElementById('btnCloseSidebar'); if (b6) b6.title = tr('closeSidebar');
+        const d1 = document.getElementById('dlgTitle'); if (d1) d1.textContent = tr('settings');
+        const d2 = document.getElementById('lblApiKey'); if (d2) d2.textContent = tr('apiKey');
+        const d3 = document.getElementById('lblModel'); if (d3) d3.textContent = tr('chooseModel');
+        const d4 = document.getElementById('btnCloseDialog'); if (d4) d4.textContent = tr('done');
+        render();
+      }
+      function toggleLang(){ curLang = (curLang === 'zh') ? 'en' : 'zh'; try { localStorage.setItem('ui.lang', JSON.stringify(curLang)); } catch {}; applyLang(); }
+
+      // State & persistence (keys follow design.md)
+      function lsGet(key, fallback) { try { const v = localStorage.getItem(key); return v !== null ? JSON.parse(v) : fallback; } catch { return fallback; } }
+      function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
+      function uid() { return (crypto && typeof crypto.randomUUID === 'function') ? crypto.randomUUID() : ('id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)); }
+
+      // Migrate older keys if present
+      (function migrate() {
+        // theme
+        const themeStr = localStorage.getItem('ui.themeDark');
+        if (themeStr !== null && localStorage.getItem('ui.theme') === null) {
+          const dark = JSON.parse(themeStr);
+          lsSet('ui.theme', dark ? 'dark' : 'light');
+        }
+        // sessions -> threads
+        const oldSessions = localStorage.getItem('ui.sessions');
+        if (oldSessions && !localStorage.getItem('ui.threads')) {
+          try {
+            const parsed = JSON.parse(oldSessions) || [];
+            const threads = parsed.map(s => ({
+              id: s.id || uid(),
+              title: s.title || '未命名对话',
+              createdAt: s.createdAt || Date.now(),
+              messages: (s.messages || []).map(m => ({ id: uid(), role: m.role, content: m.content, time: Date.now() }))
+            }));
+            lsSet('ui.threads', threads);
+            const cur = localStorage.getItem('ui.currentSessionId');
+            if (cur) {
+              const match = threads.find(t => t.id === cur);
+              lsSet('ui.activeId', (match ? match.id : (threads[0] && threads[0].id)) || null);
+            }
+          } catch {}
+        }
+        // single chatHistory -> one thread
+        const oldSingle = localStorage.getItem('ui.chatHistory');
+        if (oldSingle && !localStorage.getItem('ui.threads')) {
+          try {
+            const msgs = JSON.parse(oldSingle) || [];
+            const id = uid();
+            const title = deriveTitle(msgs) || '未命名对话';
+            const thread = { id, title, createdAt: Date.now(), messages: msgs.map(m => ({ id: uid(), role: m.role, content: m.content, time: Date.now() })) };
+            lsSet('ui.threads', [thread]);
+            lsSet('ui.activeId', id);
+          } catch {}
+        }
+      })();
+
+      // Theme
+      function applyTheme() {
+        const theme = lsGet('ui.theme', 'dark');
+        document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
+        elBtnTheme.textContent = theme === 'dark' ? '🌙' : '☀️';
+      }
+      function toggleTheme() { const t = lsGet('ui.theme', 'dark'); lsSet('ui.theme', t === 'dark' ? 'light' : 'dark'); applyTheme(); }
+
+      // Sidebar collapsed
+      function applyCollapsed() {
+        const collapsed = !!lsGet('ui.sidebar', false);
+        elShell.classList.toggle('collapsed', collapsed);
+        elBtnOpenSidebar.style.display = collapsed ? 'inline-grid' : 'none';
+      }
+      function setCollapsed(v) { lsSet('ui.sidebar', !!v); applyCollapsed(); }
+      function isPhoneLike() { try { return (window.innerWidth <= 768) || (window.innerHeight > window.innerWidth * 1.1); } catch { return false; } }
+      function autoCollapseForMobile() { if (isPhoneLike()) setCollapsed(true); else applyCollapsed(); }
+
+      // Models and API key
+      function initSettings() {
+        const savedModel = localStorage.getItem('ui.model') || 'wisdom-ai-gpt5';
+        elModel.innerHTML = '';
+        modelList.forEach(m => { const opt = document.createElement('option'); opt.value = m; opt.textContent = m; if (m.startsWith(savedModel)) opt.selected = true; elModel.appendChild(opt); });
+        elApiKey.value = localStorage.getItem('ui.apiKey') || '';
+      }
+      function persistSettings() {
+        localStorage.setItem('ui.apiKey', elApiKey.value);
+        localStorage.setItem('ui.model', elModel.value);
+        updateModelDisplay();
+      }
+      function updateModelDisplay() {
+        try {
+          const v = (elModel && elModel.value) || localStorage.getItem('ui.model') || 'wisdom-ai-gpt5';
+          // Compact: show leading id before first ' (' if present
+          const compact = v.split(' (')[0];
+          if (elModelDisplay) elModelDisplay.textContent = compact;
+        } catch { if (elModelDisplay) elModelDisplay.textContent = 'wisdom-ai-gpt5'; }
+      }
+      function setModelByPrefix(prefix) {
+        if (!elModel) return;
+        let target = null;
+        for (const opt of elModel.options) { if (String(opt.value).startsWith(prefix)) { target = opt.value; break; } }
+        if (!target) return;
+        try { elModel.value = target; } catch {}
+        try { localStorage.setItem('ui.model', target); } catch {}
+        updateModelDisplay();
+      }
+      function nextFromCycle(key, choices) {
+        let idx = -1; try { idx = parseInt(localStorage.getItem(key) || '-1', 10); } catch {}
+        const next = isNaN(idx) ? 0 : (idx + 1) % choices.length;
+        try { localStorage.setItem(key, String(next)); } catch {}
+        return choices[next];
+      }
+      function cycleGptPrefix() { return nextFromCycle('ui.cycle.gpt', ['wisdom-ai-gpt5', 'wisdom-ai-gpt5-nano', 'wisdom-ai-gpt5-mini']); }
+      function cycleDeepseekPrefix() { return nextFromCycle('ui.cycle.deepseek', ['wisdom-ai-dsv3', 'wisdom-ai-dsr1']); }
+
+      // Threads
+      let threads = lsGet('ui.threads', [ { id: uid(), title: '全新会话', createdAt: Date.now(), messages: [] } ]);
+      let activeId = lsGet('ui.activeId', threads[0]?.id || null);
+      function ensureActive() { if (!threads.length) { threads = [ { id: uid(), title: '全新会话', createdAt: Date.now(), messages: [] } ]; activeId = threads[0].id; saveThreads(); } if (!activeId || !threads.find(t => t.id === activeId)) { activeId = threads[0].id; saveThreads(); } }
+      function saveThreads() { lsSet('ui.threads', threads); lsSet('ui.activeId', activeId); }
+      function activeThread() { return threads.find(t => t.id === activeId); }
+      function deriveTitle(messages) { const first = (messages || []).find(m => m.role === 'user' && (m.content || '').trim()); if (!first) return ''; const t = first.content.trim().replace(/\s+/g, ' '); return t.length > 18 ? t.slice(0,18) + '…' : t; }
+      function newThread() { const t = { id: uid(), title: '全新会话', createdAt: Date.now(), messages: [] }; threads = [t, ...threads]; activeId = t.id; saveThreads(); render(); }
+      function deleteThread(id) { const idx = threads.findIndex(t => t.id === id); if (idx === -1) return; if (!confirm(tr('confirmDelete'))) return; threads.splice(idx,1); if (!threads.length) { newThread(); } else if (activeId === id) { activeId = threads[0].id; } saveThreads(); render(); }
+      function renameThread(id) { const t = threads.find(x => x.id === id); if (!t) return; const v = prompt(tr('renamePrompt'), t.title || ''); if (v !== null) { t.title = v.trim() || t.title; saveThreads(); render(); } }
+      function switchThread(id) { if (activeId === id) return; activeId = id; saveThreads(); render(); }
+
+      // Render
+      function renderThreads() {
+        elSessions.innerHTML = '';
+        threads.forEach(t => {
+          const wrap = document.createElement('div');
+          wrap.className = 'session' + (t.id === activeId ? ' active' : '');
+          wrap.addEventListener('click', () => switchThread(t.id));
+          const title = document.createElement('div'); title.className = 't'; title.textContent = t.title || '未命名对话';
+          const date = document.createElement('div'); date.className = 'd'; date.textContent = new Date(t.createdAt).toLocaleString();
+          const act = document.createElement('div'); act.className = 'act';
+          const btnRename = document.createElement('button'); btnRename.textContent = '✏️'; btnRename.title = tr('rename'); btnRename.addEventListener('click', (e) => { e.stopPropagation(); renameThread(t.id); });
+          const btnDel = document.createElement('button'); btnDel.textContent = '🗑️'; btnDel.title = tr('del'); btnDel.addEventListener('click', (e) => { e.stopPropagation(); deleteThread(t.id); });
+          act.appendChild(btnRename); act.appendChild(btnDel);
+          wrap.appendChild(title); wrap.appendChild(date); wrap.appendChild(act);
+          elSessions.appendChild(wrap);
+        });
+      }
+      function renderMessages() {
+        // Ensure we clean any previous empty-state scene before re-render
+        if (window.__emptySceneCleanup) { try { window.__emptySceneCleanup(); } catch {} window.__emptySceneCleanup = null; }
+        elList.innerHTML = '';
+        const t = activeThread(); if (!t) return;
+        if (!t.messages.length) {
+          const holder = document.createElement('div');
+          holder.style.cssText = 'height:100%;display:block;position:relative;';
+          // Mount dynamic scene from origin.html
+          window.__emptySceneCleanup = mountOriginScene(holder);
+          elList.appendChild(holder);
+        } else {
+          t.messages.forEach(m => {
+            const line = document.createElement('div'); line.className = 'line ' + m.role;
+            const bubble = document.createElement('div'); bubble.className = 'bubble panel';
+            const meta = document.createElement('div'); meta.className = 'meta';
+            const badge = document.createElement('span'); badge.className = 'badge ' + m.role; badge.textContent = (m.role === 'user' ? tr('you') : tr('assistant'));
+            const time = document.createElement('span'); time.textContent = new Date(m.time).toLocaleTimeString(); time.className = 'muted';
+            const content = document.createElement('div'); content.textContent = m.content;
+            meta.appendChild(badge); meta.appendChild(time); bubble.appendChild(meta); bubble.appendChild(content); line.appendChild(bubble); elList.appendChild(line);
+          });
+        }
+        requestAnimationFrame(() => { elList.scrollTop = elList.scrollHeight; });
+      }
+      function render() { renderThreads(); renderMessages(); }
+
+      // Mount the dynamic canvas scene (ported from origin.html) into a container
+      function mountOriginScene(container) {
+        const canvas = document.createElement('canvas');
+        canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
+        container.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+
+        // Math helpers
+        const TAU = Math.PI * 2;
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+        const vec = (x=0, y=0) => ({ x, y });
+        const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+        const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+        const mul = (a, s) => ({ x: a.x * s, y: a.y * s });
+        const dot = (a, b) => a.x * b.x + a.y * b.y;
+        const len = (a) => Math.hypot(a.x, a.y);
+        const norm = (a) => { const L = len(a) || 1; return { x: a.x / L, y: a.y / L }; };
+        const perp = (a) => ({ x: -a.y, y: a.x });
+        const cross2 = (a, b) => a.x * b.y - a.y * b.x; // 2D cross -> scalar
+        const crossSV = (s, v) => ({ x: -s * v.y, y: s * v.x }); // s(omega) x v
+        const rot = (v, ang) => { const c = Math.cos(ang), s = Math.sin(ang); return { x: v.x * c - v.y * s, y: v.x * s + v.y * c }; };
+        function closestPointOnSegment(p, a, b) {
+          const ab = sub(b, a); const t = clamp(dot(sub(p, a), ab) / (dot(ab, ab) || 1), 0, 1); return add(a, mul(ab, t));
+        }
+        function hexagonPoints(center, R, angle) {
+          const pts = []; for (let i = 0; i < 6; i++) { const a = angle + i * TAU / 6; pts.push({ x: center.x + R * Math.cos(a), y: center.y + R * Math.sin(a) }); } return pts;
+        }
+
+        // State
+        const state = {
+          dpr: Math.max(1, window.devicePixelRatio || 1),
+          w: 0, h: 0,
+          center: vec(), hexR: 200, hexAngle: 0, hexOmega: 0.5,
+          gravity: 600,
+          balls: [],
+          mouse: { x: 0, y: 0, vx: 0, vy: 0, down: false, t: performance.now()/1000 },
+          grab: null,
+          mouseSpringK: 7000,
+          mouseDamping: 7000 * 0.085,
+          initedBalls: false,
+          paused: false,
+          downBall: null,
+          downPos: { x: 0, y: 0 },
+          downTime: 0,
+          moved: false,
+        };
+
+        let lastCenter = null, lastHexR = null;
+        function resize() {
+          // Robustly measure container; fall back if layout not ready yet
+          let cw = 0, ch = 0;
+          const rect = container.getBoundingClientRect();
+          cw = Math.floor(rect.width);
+          ch = Math.floor(rect.height);
+          if (!cw || !ch) {
+            const p = container.parentElement || document.body;
+            const r2 = p.getBoundingClientRect();
+            cw = Math.floor(r2.width || window.innerWidth || 800);
+            ch = Math.floor(r2.height || window.innerHeight || 600);
+          }
+          state.dpr = Math.max(1, window.devicePixelRatio || 1);
+          canvas.width = Math.max(1, Math.floor(cw * state.dpr));
+          canvas.height = Math.max(1, Math.floor(ch * state.dpr));
+          const newW = Math.max(1, canvas.width / state.dpr);
+          const newH = Math.max(1, canvas.height / state.dpr);
+          state.w = newW;
+          state.h = newH;
+          ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+          const prevCenter = state.center;
+          const prevR = state.hexR;
+          state.center = vec(state.w / 2, state.h / 2);
+          state.hexR = Math.max(120, Math.min(state.w, state.h) * 0.33);
+          // If balls already inited, keep them relative to center and scale with radius to avoid drift
+          if (state.initedBalls && prevCenter && typeof prevCenter.x === 'number') {
+            const s = prevR ? (state.hexR / prevR) : 1;
+            for (const b of state.balls) {
+              const rp = sub(b.p, prevCenter);
+              b.p = add(state.center, mul(rp, s));
+            }
+          }
+          lastCenter = state.center;
+          lastHexR = state.hexR;
+        }
+
+        const ICON_SOURCES = {
+          openai: [
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/openai.png',
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/light/openai.png',
+          ],
+          claude: [
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/claude-color.png',
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/claude.png',
+          ],
+          deepseek: [
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/deepseek-color.png',
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/deepseek.png',
+          ],
+          gemini: [
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/gemini-color.png',
+            'https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@master/packages/static-png/dark/gemini.png',
+          ],
+        };
+        function loadIconSequence(urls, assign) {
+          if (!urls || urls.length === 0) return; const tryLoad = (i) => { if (i >= urls.length) return; const img = new Image(); img.crossOrigin = 'anonymous'; img.onload = () => assign(img); img.onerror = () => tryLoad(i + 1); img.src = urls[i]; }; tryLoad(0);
+        }
+        class Ball { constructor({ x, y, r=28, iconKey='openai', colorA='#6cf', colorB='#acf' }) { this.p = vec(x, y); this.v = vec(0, 0); this.r = r; this.m = r * r * 0.02 + 1; this.I = 0.5 * this.m * this.r * this.r; this.omega = 0; this.theta = Math.random() * TAU; this.colorA = colorA; this.colorB = colorB; this.iconKey = iconKey; this.img = null; } }
+        function initBalls() {
+          const R = state.hexR * 0.50;
+          state.balls = [
+            new Ball({ iconKey:'openai',  x: state.center.x - R * 0.6, y: state.center.y - R * 0.15, r: 28, colorA:'#7cf', colorB:'#acf' }),
+            new Ball({ iconKey:'claude',  x: state.center.x + R * 0.55, y: state.center.y - R * 0.25, r: 28, colorA:'#fa7', colorB:'#fdc' }),
+            // Adjusted DeepSeek initial position to avoid clipping outside on load
+            new Ball({ iconKey:'deepseek',x: state.center.x - R * 0.05, y: state.center.y + R * 0.35, r: 28, colorA:'#9f7', colorB:'#cdf' }),
+            new Ball({ iconKey:'gemini',  x: state.center.x + R * 0.45, y: state.center.y + R * 0.2,  r: 28, colorA:'#9cf', colorB:'#def' }),
+          ];
+          const initV = [vec(80, -20), vec(-60, 0), vec(40, -30), vec(-10, 50)];
+          for (let i = 0; i < state.balls.length; i++) state.balls[i].v = initV[i % initV.length];
+          for (const b of state.balls) { const srcs = ICON_SOURCES[b.iconKey] || []; loadIconSequence(srcs, (img) => { b.img = img; }); }
+        }
+
+        const params = { eWall:1.00, eBall:1.00, muWall:0.28, muBall:0.10, linDrag:0.01, angDrag:0.08, positionSlop:0.01 };
+        const hexagonEdges = (center, R, angle) => { const pts = hexagonPoints(center, R, angle); const edges = []; for (let i = 0; i < 6; i++) edges.push([pts[i], pts[(i+1)%6]]); return edges; };
+        function integrateForces(dt) {
+          const g = state.gravity; const drag = Math.exp(-params.linDrag * dt); const adrag = Math.exp(-params.angDrag * dt);
+          for (const b of state.balls) { b.v.y += g * dt; b.v.x *= drag; b.v.y *= drag; b.omega *= adrag; }
+          if (state.grab && state.grab.ball) {
+            const b = state.grab.ball; const rWorld = rot(state.grab.rLocal, b.theta); const anchor = add(b.p, rWorld); const vAnchor = add(b.v, crossSV(b.omega, rWorld));
+            const mouse = state.mouse; const k = state.mouseSpringK; const c = state.mouseDamping; const maxF = 20000;
+            const dx = sub(vec(mouse.x, mouse.y), anchor); const dv = sub(vec(mouse.vx, mouse.vy), vAnchor);
+            let Fx = k * dx.x + c * dv.x; let Fy = k * dx.y + c * dv.y; const mag = Math.hypot(Fx, Fy); if (mag > maxF) { Fx *= maxF / mag; Fy *= maxF / mag; }
+            b.v.x += (Fx / b.m) * dt; b.v.y += (Fy / b.m) * dt; const torque = rWorld.x * Fy - rWorld.y * Fx; b.omega += (torque / b.I) * dt;
+          }
+        }
+        function collideBallWithHex(b, edges) {
+          const c = state.center; const w = state.hexOmega;
+          for (const [a, d] of edges) {
+            const cp = closestPointOnSegment(b.p, a, d); let n = sub(b.p, cp); let dist = len(n);
+            if (dist < b.r) {
+              if (dist < 1e-6) { n = norm(sub(b.p, c)); dist = 1e-6; } else { n = mul(n, 1 / dist); }
+              const penetration = b.r - dist; b.p = add(b.p, mul(n, penetration + params.positionSlop));
+              const rWorld = sub(cp, c); const vWall = crossSV(w, rWorld); const rBall = mul(n, -b.r); const vBallContact = add(b.v, crossSV(b.omega, rBall));
+              const vRel = sub(vBallContact, vWall); const vn = dot(vRel, n); let jnApplied = 0;
+              if (vn < 0) { const jn = -(1 + params.eWall) * vn / (1 / b.m); b.v = add(b.v, mul(n, jn / b.m)); jnApplied = Math.abs(jn); }
+              const t = perp(n); const vt = dot(vRel, t); const rCrossT = cross2(rBall, t); const denomT = (1 / b.m) + (rCrossT * rCrossT) / b.I; let jt = -vt / denomT;
+              const maxF = jnApplied * params.muWall; jt = clamp(jt, -maxF, maxF); b.v = add(b.v, mul(t, jt / b.m)); const torque = cross2(rBall, mul(t, jt)); b.omega += torque / b.I;
+            }
+          }
+        }
+        function collideBallsPair(b1, b2) {
+          const delta = sub(b2.p, b1.p); const dist = len(delta); const minDist = b1.r + b2.r; if (dist === 0) return; if (dist < minDist) {
+            const n = mul(delta, 1 / dist); const penetration = minDist - dist; const totalInvM = 1 / b1.m + 1 / b2.m; const corr1 = (1 / b1.m) / totalInvM * penetration; const corr2 = (1 / b2.m) / totalInvM * penetration; b1.p = add(b1.p, mul(n, -corr1)); b2.p = add(b2.p, mul(n, +corr2));
+            const r1 = mul(n, +b1.r); const r2 = mul(n, -b2.r); const v1c = add(b1.v, crossSV(b1.omega, r1)); const v2c = add(b2.v, crossSV(b2.omega, r2)); const vRel = sub(v2c, v1c);
+            const vn = dot(vRel, n); if (vn < 0) { const invMass = (1 / b1.m) + (1 / b2.m); const jn = -(1 + params.eBall) * vn / invMass; const impulseN = mul(n, jn); b1.v = add(b1.v, mul(impulseN, -1 / b1.m)); b2.v = add(b2.v, mul(impulseN, +1 / b2.m)); }
+            const t = perp(n); const vt = dot(sub(b2.v, b1.v), t) + (-b2.omega * b2.r - b1.omega * b1.r); const denomT = (1 / b1.m) + (1 / b2.m) + (b1.r * b1.r) / b1.I + (b2.r * b2.r) / b2.I; let jt = -vt / denomT; const approxJn = Math.abs((1 + params.eBall) * vn / ((1 / b1.m) + (1 / b2.m))); const maxJt = approxJn * params.muBall; jt = clamp(jt, -maxJt, maxJt); const impulseT = mul(t, jt); b1.v = add(b1.v, mul(impulseT, -1 / b1.m)); b2.v = add(b2.v, mul(impulseT, +1 / b2.m)); b1.omega += cross2(r1, mul(impulseT, -1)) / b1.I; b2.omega += cross2(r2, mul(impulseT, +1)) / b2.I;
+          }
+        }
+
+        function step(dt) {
+          dt = Math.min(dt, 1/60); state.hexAngle += state.hexOmega * dt; integrateForces(dt);
+          for (const b of state.balls) { b.p = add(b.p, mul(b.v, dt)); b.theta += b.omega * dt; }
+          const edges = hexagonEdges(state.center, state.hexR, state.hexAngle);
+          for (const b of state.balls) collideBallWithHex(b, edges);
+          for (let i=0;i<state.balls.length;i++) for (let j=i+1;j<state.balls.length;j++) collideBallsPair(state.balls[i], state.balls[j]);
+        }
+        function drawHexagon(center, R, angle) {
+          const pts = hexagonPoints(center, R, angle); ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.closePath();
+          const grad = ctx.createLinearGradient(center.x - R, center.y - R, center.x + R, center.y + R); grad.addColorStop(0, 'rgba(40,60,120,0.25)'); grad.addColorStop(1, 'rgba(120,40,180,0.15)'); ctx.fillStyle = grad; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(180,200,255,0.6)'; ctx.stroke(); ctx.save(); ctx.shadowBlur = 20; ctx.shadowColor = 'rgba(120,180,255,0.35)'; ctx.strokeStyle = 'rgba(120,180,255,0.3)'; ctx.lineWidth = 1.2; ctx.stroke(); ctx.restore();
+        }
+        function drawBall(b) {
+          ctx.save(); ctx.translate(b.p.x, b.p.y);
+          if (b.img && b.img.complete && b.img.naturalWidth > 0) { ctx.save(); ctx.rotate(b.theta); const side = Math.max(2*b.r, 12); ctx.drawImage(b.img, -side/2, -side/2, side, side); ctx.restore(); }
+          else { ctx.rotate(b.theta); const rg = ctx.createRadialGradient(-b.r*0.3, -b.r*0.3, b.r*0.2, 0, 0, b.r); rg.addColorStop(0, b.colorB); rg.addColorStop(1, b.colorA); ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(0, 0, b.r, 0, TAU); ctx.fill(); }
+          ctx.restore();
+        }
+        function renderScene() {
+          ctx.clearRect(0, 0, state.w, state.h);
+          // Background grid
+          ctx.save(); ctx.globalAlpha = 0.12; const grid = 36; ctx.strokeStyle = '#1a223a'; ctx.lineWidth = 1;
+          for (let x = (state.center.x % grid); x < state.w; x += grid) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, state.h); ctx.stroke(); }
+          for (let y = (state.center.y % grid); y < state.h; y += grid) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(state.w, y); ctx.stroke(); }
+          ctx.restore();
+          drawHexagon(state.center, state.hexR, state.hexAngle);
+          for (const b of state.balls) drawBall(b);
+        }
+
+        let running = true, raf = 0, last = performance.now();
+        function tick(now) {
+          if (!running) return;
+          const dt = (now - last) / 1000; last = now;
+          if (!state.paused) { step(dt); }
+          renderScene();
+          raf = requestAnimationFrame(tick);
+        }
+
+        function pickBallAt(pos) { let best = null, bestDist = Infinity; for (const b of state.balls) { const d = Math.hypot(pos.x - b.p.x, pos.y - b.p.y); if (d <= b.r * 1.1 && d < bestDist) { best = b; bestDist = d; } } return best; }
+        function isPointInHexagon(px, py) { const pts = hexagonPoints(state.center, state.hexR, state.hexAngle); let sign = 0; for (let i=0;i<6;i++){ const a = pts[i], b = pts[(i+1)%6]; const cross = (b.x-a.x)*(py-a.y) - (b.y-a.y)*(px-a.x); if (Math.abs(cross) < 1e-6) continue; const s = cross > 0 ? 1 : -1; if (sign === 0) sign = s; else if (sign !== s) return false; } return true; }
+        function onPointerDown(e) { const rect = canvas.getBoundingClientRect(); const x = e.clientX - rect.left; const y = e.clientY - rect.top; state.mouse.down = true; state.mouse.x = x; state.mouse.y = y; state.mouse.vx = 0; state.mouse.vy = 0; state.mouse.t = performance.now()/1000; const b = pickBallAt({ x, y }); if (b) { const rWorld = sub({ x, y }, b.p); const rLocal = rot(rWorld, -b.theta); state.grab = { ball: b, rLocal }; state.downBall = b; try { canvas.setPointerCapture(e.pointerId); } catch {} } else { state.downBall = null; } state.downPos = { x, y }; state.downTime = performance.now(); state.moved = false; }
+        function onPointerMove(e) { const rect = canvas.getBoundingClientRect(); const x = e.clientX - rect.left; const y = e.clientY - rect.top; const t = performance.now()/1000; const dt = Math.max(1e-3, t - state.mouse.t); state.mouse.vx = (x - state.mouse.x) / dt; state.mouse.vy = (y - state.mouse.y) / dt; state.mouse.x = x; state.mouse.y = y; state.mouse.t = t; if (!state.moved) { const dx = x - state.downPos.x, dy = y - state.downPos.y; if ((dx*dx + dy*dy) > 64) state.moved = true; } }
+        function onPointerUp(e) {
+          state.mouse.down = false;
+          const rect = canvas.getBoundingClientRect();
+          const ux = e.clientX - rect.left;
+          const uy = e.clientY - rect.top;
+          const clicked = (!state.moved && (performance.now() - state.downTime < 400));
+          const clickedBall = (clicked && state.downBall) ? state.downBall : null;
+          state.grab = null;
+          if (clicked) {
+            if (clickedBall) {
+              const key = clickedBall.iconKey;
+              if (key === 'gemini') setModelByPrefix('wisdom-ai-gemini-2.5-flash');
+              else if (key === 'claude') setModelByPrefix('wisdom-ai-claude-sonnet-4');
+              else if (key === 'openai') setModelByPrefix(cycleGptPrefix());
+              else if (key === 'deepseek') setModelByPrefix(cycleDeepseekPrefix());
+            } else {
+              // Clicked empty area: toggle pause if inside hexagon
+              if (isPointInHexagon(ux, uy)) { state.paused = !state.paused; }
+            }
+          }
+          state.downBall = null;
+          state.moved = false;
+          try { canvas.releasePointerCapture(e.pointerId); } catch {}
+        }
+
+        // Boot scene (defer one frame to ensure layout is ready)
+        resize();
+        const resz = () => resize();
+        const onShow = () => resize();
+        window.addEventListener('resize', resz);
+        window.addEventListener('pageshow', onShow);
+        // Resize when container changes (for better compatibility)
+        let ro = null;
+        if (typeof ResizeObserver !== 'undefined') {
+          try { ro = new ResizeObserver(() => resize()); ro.observe(container); } catch {}
+        } else {
+          // Fallback: schedule an extra resize after layout
+          setTimeout(resize, 0);
+          requestAnimationFrame(resize);
+        }
+        // Defer balls init until layout stabilizes to avoid offset on new chats
+        function deferInitBalls() {
+          let attempts = 0;
+          const tryInit = () => {
+            attempts++;
+            resize();
+            if (!state.initedBalls && state.w > 50 && state.h > 50) {
+              initBalls();
+              state.initedBalls = true;
+              return;
+            }
+            if (!state.initedBalls && attempts < 10) requestAnimationFrame(tryInit);
+          };
+          // kick twice: rAF and setTimeout to cover various browsers
+          requestAnimationFrame(tryInit);
+          setTimeout(() => { if (!state.initedBalls) { resize(); initBalls(); state.initedBalls = true; } }, 120);
+        }
+        canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
+        canvas.addEventListener('pointermove', onPointerMove, { passive: true });
+        canvas.addEventListener('pointerup', onPointerUp, { passive: true });
+        canvas.addEventListener('pointercancel', onPointerUp, { passive: true });
+        raf = requestAnimationFrame(tick);
+        deferInitBalls();
+
+        // Return cleanup
+        return function cleanup() {
+          running = false; try { cancelAnimationFrame(raf); } catch {}
+          window.removeEventListener('resize', resz);
+          window.removeEventListener('pageshow', onShow);
+          if (ro && ro.disconnect) { try { ro.disconnect(); } catch {} }
+          canvas.removeEventListener('pointerdown', onPointerDown);
+          canvas.removeEventListener('pointermove', onPointerMove);
+          canvas.removeEventListener('pointerup', onPointerUp);
+          canvas.removeEventListener('pointercancel', onPointerUp);
+          try { container.removeChild(canvas); } catch {}
+        };
+      }
+
+      function formatError(status, data, rawText) {
+        const get = (o, p) => (o && p in o ? o[p] : undefined);
+        const msg = get(data, 'error')?.message || get(data, 'message') || get(data, 'error') || '';
+        const code = get(data, 'error')?.code || get(data, 'code');
+        const reasonFromStatus = (() => {
+          if (status === 401) return curLang === 'zh' ? 'API Key 无效或已过期 (401)' : 'API Key invalid or expired (401)';
+          if (status === 403) return curLang === 'zh' ? '无权限访问该资源 (403)' : 'Forbidden (403)';
+          if (status === 429) return curLang === 'zh' ? '请求过多或余额不足，触发限流 (429)' : 'Too many requests or insufficient balance (429)';
+          if (status === 400) return curLang === 'zh' ? '请求参数无效 (400)' : 'Bad request (400)';
+          if (status === 502 || status === 503 || status === 504) return curLang === 'zh' ? '上游服务暂时不可用，请稍后再试' : 'Upstream temporarily unavailable, please try again later';
+          if (status >= 500) return curLang === 'zh' ? `服务器内部错误 (${status})` : `Server error (${status})`;
+          if (status > 0) return `HTTP ${status}`;
+          return '';
+        })();
+        let detail = msg || rawText || '';
+        if (code && typeof code === 'string') detail = `[${code}] ${detail}`;
+        const finalMsg = [reasonFromStatus, detail].filter(Boolean).join(curLang === 'zh' ? '：' : ': ');
+        return finalMsg || (curLang === 'zh' ? '请求失败' : 'Request failed');
+      }
+
+      async function send() {
+        const text = elInput.value.trim();
+        if (!text) return;
+        if (!(elApiKey.value || '').trim()) {
+          alert(tr('needKey'));
+          return;
+        }
+        const t = activeThread();
+        const user = { id: uid(), role: 'user', content: text, time: Date.now() };
+        const thinking = { id: uid(), role: 'assistant', content: tr('thinking'), time: Date.now() };
+        t.messages.push(user, thinking);
+        if (!t.title || t.title === '全新会话') { const maybe = deriveTitle(t.messages); if (maybe) t.title = maybe; }
+        elInput.value = '';
+        saveThreads();
+        render();
+        try {
+          const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + elApiKey.value.trim(),
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: elModel.value,
+              messages: t.messages.map(m => ({ role: m.role, content: m.content })).filter(m => m.role !== 'assistant' || m.content !== tr('thinking'))
+            })
+          });
+          // Attempt to parse JSON; fallback to text for better diagnostics
+          const textBody = await res.clone().text().catch(() => '');
+          let data = null; try { data = textBody ? JSON.parse(textBody) : null; } catch {}
+          if (!res.ok) {
+            const pretty = formatError(res.status, data || {}, textBody);
+            throw new Error(pretty);
+          }
+          const content = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content)
+            ? data.choices[0].message.content
+            : (textBody || '');
+          const idx = t.messages.findIndex(m => m.id === thinking.id);
+          if (idx >= 0) { t.messages[idx].content = content || '（空响应）'; t.messages[idx].time = Date.now(); }
+          saveThreads();
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e || '未知错误');
+          // 额外提示：后端未启动或网络错误
+          if (/Failed to fetch|NetworkError|TypeError/.test(String(e))) {
+            const idx = t.messages.findIndex(m => m.id === thinking.id);
+            if (idx >= 0) t.messages[idx].content = tr('netFail');
+          } else {
+            const idx = t.messages.findIndex(m => m.id === thinking.id);
+            if (idx >= 0) t.messages[idx].content = tr('reqFail') + msg;
+          }
+          saveThreads();
+        } finally {
+          render();
+        }
+      }
+
+      elSend.addEventListener('click', send);
+      elInput.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          send();
+        }
+      });
+      // Top/side actions
+      elBtnCloseSidebar.addEventListener('click', () => setCollapsed(true));
+      elBtnOpenSidebar.addEventListener('click', () => setCollapsed(false));
+      elBtnSettings.addEventListener('click', () => { elOverlay.classList.add('open'); });
+      elBtnSettings2.addEventListener('click', () => { elOverlay.classList.add('open'); });
+      elBtnCloseDialog.addEventListener('click', () => { persistSettings(); elOverlay.classList.remove('open'); });
+      elBtnTheme.addEventListener('click', toggleTheme);
+      elBtnLang.addEventListener('click', toggleLang);
+      elBtnNew.addEventListener('click', newThread);
+
+      // Close dialog on overlay click
+      elOverlay.addEventListener('click', (e) => { if (e.target === elOverlay) { elOverlay.classList.remove('open'); } });
+
+      // Error formatting (kept from earlier UI)
+      function formatError(status, data, rawText) {
+        const get = (o, p) => (o && p in o ? o[p] : undefined);
+        const msg = get(data, 'error')?.message || get(data, 'message') || get(data, 'error') || '';
+        const code = get(data, 'error')?.code || get(data, 'code');
+        const reasonFromStatus = (() => {
+          if (status === 401) return 'API Key 无效或已过期 (401)';
+          if (status === 403) return '无权限访问该资源 (403)';
+          if (status === 429) return '请求过多或余额不足，触发限流 (429)';
+          if (status === 400) return '请求参数无效 (400)';
+          if (status === 502 || status === 503 || status === 504) return '上游服务暂时不可用，请稍后再试';
+          if (status >= 500) return `服务器内部错误 (${status})`;
+          if (status > 0) return `HTTP ${status}`;
+          return '';
+        })();
+        let detail = msg || rawText || '';
+        if (code && typeof code === 'string') detail = `[${code}] ${detail}`;
+        const finalMsg = [reasonFromStatus, detail].filter(Boolean).join('：');
+        return finalMsg || '请求失败';
+      }
+
+      // Boot
+      initSettings();
+      updateModelDisplay();
+      applyTheme();
+      applyCollapsed();
+      ensureActive();
+      applyLang();
+      autoCollapseForMobile();
+      window.addEventListener('resize', autoCollapseForMobile);
+      window.addEventListener('orientationchange', autoCollapseForMobile);
+    </script>
+  </body>
+  </html>
