@@ -124,7 +124,11 @@ export default {
       }
       return jsonResponse(200, payload || {});
     }
+    // For other GET/HEAD requests, serve static assets (index.html, JS, CSS, etc.)
+    if ((req.method === 'GET' || req.method === 'HEAD') && env && env.ASSETS) {
+      // Let the assets binding handle routing; useful for '/' and static files
+      return env.ASSETS.fetch(req);
+    }
     return notFound();
   },
 };
-

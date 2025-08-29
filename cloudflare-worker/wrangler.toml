@@ -15,3 +15,7 @@ mode = "smart"
 [vars]
 # Toggle mock mode for testing without upstream calls
 MOCK_AI = "0"
+
+# Serve static assets from ../public via this Worker
+[assets]
+directory = "../public"
