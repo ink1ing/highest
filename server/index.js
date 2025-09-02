@@ -41,10 +41,20 @@ function getAuthKey(req) {
   return null;
 }
 
-async function parseBody(req) {
+async function parseBody(req, maxBytes = 262144) { // ~256KB cap
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (c) => chunks.push(c));
+    let total = 0;
+    req.on('data', (c) => {
+      total += c.length;
+      if (total > maxBytes) {
+        try { req.destroy(); } catch {}
+        const e = new Error('BODY_TOO_LARGE');
+        e.code = 'BODY_TOO_LARGE';
+        return reject(e);
+      }
+      chunks.push(c);
+    });
     req.on('end', () => {
       try {
         const raw = Buffer.concat(chunks).toString('utf8');
@@ -64,12 +74,19 @@ function isMessageArray(val) {
 
 export async function handleChat(req, res) {
   try {
-    console.log('Chat request received');
+    if (process.env.DEBUG) console.log('Chat request received');
     const key = getAuthKey(req);
-    console.log('API key extracted:', key ? `${key.substring(0, 10)}...` : 'null');
+    if (process.env.DEBUG) console.log('API key extracted:', key ? `${key.substring(0, 10)}...` : 'null');
     if (!key) return json(res, 400, { error: { message: 'Missing API key. Provide in Authorization: Bearer <key> or X-API-Key.' } });
 
-    const { data } = await parseBody(req);
+    const { data } = await parseBody(req).catch((e) => {
+      if (e && e.code === 'BODY_TOO_LARGE') {
+        json(res, 413, { error: { message: 'Request body too large' } });
+      } else {
+        json(res, 400, { error: { message: 'Invalid JSON body' } });
+      }
+      throw e; // ensure outer catch stops further handling
+    });
     const candidateModel = data.model;
     const model = resolveModel(candidateModel);
     if (!model) return json(res, 400, { error: { message: `Invalid model. Allowed: ${MODEL_CODES.join(', ')}` } });
@@ -160,26 +177,40 @@ except Exception as e:
       }
     }
 
-    // Default to using fetch
-    const vendorRes = await fetch(`${VENDOR_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'python-requests/2.31.0',
-        'Accept-Encoding': 'gzip, deflate',
-        'Accept': '*/*',
-        'Connection': 'keep-alive',
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(requestBody, 'utf8').toString()
-      },
-      body: requestBody
-    });
-    
-    const payload = await vendorRes.json().catch(() => ({}));
-    if (!vendorRes.ok) {
-      return json(res, vendorRes.status, payload || { error: { message: 'Upstream error' } });
+    // Default to using fetch with timeout
+    const ctrl = new AbortController();
+    const timeoutMs = Number(process.env.UPSTREAM_TIMEOUT_MS || 20000);
+    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, timeoutMs);
+    try {
+      const vendorRes = await fetch(`${VENDOR_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'User-Agent': 'python-requests/2.31.0',
+          'Accept-Encoding': 'gzip, deflate',
+          'Accept': '*/*',
+          'Connection': 'keep-alive',
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(requestBody, 'utf8').toString()
+        },
+        body: requestBody,
+        signal: ctrl.signal
+      });
+      const raw = await vendorRes.text().catch(() => '');
+      let payload = {};
+      try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { error: { message: raw || 'Upstream error' } }; }
+      if (!vendorRes.ok) {
+        return json(res, vendorRes.status, payload || { error: { message: 'Upstream error' } });
+      }
+      return json(res, 200, payload);
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || String(e).includes('AbortError'))) {
+        return json(res, 504, { error: { message: 'Upstream timeout' } });
+      }
+      return json(res, 502, { error: { message: 'Upstream network error', detail: String(e && e.message || e) } });
+    } finally {
+      clearTimeout(t);
     }
-    return json(res, 200, payload);
   } catch (err) {
     return json(res, 500, { error: { message: 'Server error', detail: String(err && err.message || err) } });
   }
