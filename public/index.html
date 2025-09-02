@@ -250,11 +250,15 @@
           confirmDelete: 'Delete this chat?', renamePrompt: 'Rename chat',
           startTitle: 'Start your conversation', startSubtitle: 'Type below or pick a thread from the left.',
           needKey: 'Please set your API Key in Settings first',
-          thinking: 'Thinking…', netFail: 'Request failed: cannot reach backend. Ensure npm run dev is running and open http://localhost:8787.',
+          thinking: 'Thinking…', netFail: 'Request failed: cannot reach backend.',
           reqFail: 'Request failed: ',
           openSidebar: 'Open', closeSidebar: 'Collapse'
         }
       };
+      // Freeze i18n to avoid accidental runtime mutations
+      try {
+        Object.freeze(i18n.zh); Object.freeze(i18n.en); Object.freeze(i18n);
+      } catch {}
       let curLang = (function(){ try { const v = localStorage.getItem('ui.lang'); return v ? JSON.parse(v) : 'zh'; } catch { return 'zh'; } })();
       function tr(k){ return (i18n[curLang] && i18n[curLang][k]) || k; }
       function applyLang(){
@@ -338,6 +342,8 @@
       function setCollapsed(v) { lsSet('ui.sidebar', !!v); applyCollapsed(); }
       function isPhoneLike() { try { return (window.innerWidth <= 768) || (window.innerHeight > window.innerWidth * 1.1); } catch { return false; } }
       function autoCollapseForMobile() { if (isPhoneLike()) setCollapsed(true); else applyCollapsed(); }
+      // Small utility: debounce to reduce redundant layout work on resize
+      function debounce(fn, wait=120){ let t; return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn.apply(null,args), wait); }; }
 
       // Models and API key
       function initSettings() {
@@ -728,13 +734,17 @@
         return finalMsg || (curLang === 'zh' ? '请求失败' : 'Request failed');
       }
 
+      let __sending = false;
       async function send() {
+        if (__sending) return;
         const text = elInput.value.trim();
         if (!text) return;
         if (!(elApiKey.value || '').trim()) {
           alert(tr('needKey'));
           return;
         }
+        __sending = true;
+        try { elSend.disabled = true; elInput.disabled = true; } catch {}
         const t = activeThread();
         const user = { id: uid(), role: 'user', content: text, time: Date.now() };
         const thinking = { id: uid(), role: 'assistant', content: tr('thinking'), time: Date.now() };
@@ -743,6 +753,9 @@
         elInput.value = '';
         saveThreads();
         render();
+        // Timeout + AbortController to avoid hanging requests
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch {} }, 20000) : null;
         try {
           const res = await fetch('/api/chat', {
             method: 'POST',
@@ -753,7 +766,8 @@
             body: JSON.stringify({
               model: elModel.value,
               messages: t.messages.map(m => ({ role: m.role, content: m.content })).filter(m => m.role !== 'assistant' || m.content !== tr('thinking'))
-            })
+            }),
+            ...(ctrl ? { signal: ctrl.signal } : {})
           });
           // Attempt to parse JSON; fallback to text for better diagnostics
           const textBody = await res.clone().text().catch(() => '');
@@ -771,7 +785,7 @@
         } catch (e) {
           const msg = e && e.message ? e.message : String(e || '未知错误');
           // 额外提示：后端未启动或网络错误
-          if (/Failed to fetch|NetworkError|TypeError/.test(String(e))) {
+          if (/Failed to fetch|NetworkError|TypeError|AbortError/.test(String(e))) {
             const idx = t.messages.findIndex(m => m.id === thinking.id);
             if (idx >= 0) t.messages[idx].content = tr('netFail');
           } else {
@@ -780,7 +794,10 @@
           }
           saveThreads();
         } finally {
+          if (timer) try { clearTimeout(timer); } catch {}
           render();
+          __sending = false;
+          try { elSend.disabled = false; elInput.disabled = false; elInput.focus(); } catch {}
         }
       }
 
@@ -804,26 +821,7 @@
       // Close dialog on overlay click
       elOverlay.addEventListener('click', (e) => { if (e.target === elOverlay) { elOverlay.classList.remove('open'); } });
 
-      // Error formatting (kept from earlier UI)
-      function formatError(status, data, rawText) {
-        const get = (o, p) => (o && p in o ? o[p] : undefined);
-        const msg = get(data, 'error')?.message || get(data, 'message') || get(data, 'error') || '';
-        const code = get(data, 'error')?.code || get(data, 'code');
-        const reasonFromStatus = (() => {
-          if (status === 401) return 'API Key 无效或已过期 (401)';
-          if (status === 403) return '无权限访问该资源 (403)';
-          if (status === 429) return '请求过多或余额不足，触发限流 (429)';
-          if (status === 400) return '请求参数无效 (400)';
-          if (status === 502 || status === 503 || status === 504) return '上游服务暂时不可用，请稍后再试';
-          if (status >= 500) return `服务器内部错误 (${status})`;
-          if (status > 0) return `HTTP ${status}`;
-          return '';
-        })();
-        let detail = msg || rawText || '';
-        if (code && typeof code === 'string') detail = `[${code}] ${detail}`;
-        const finalMsg = [reasonFromStatus, detail].filter(Boolean).join('：');
-        return finalMsg || '请求失败';
-      }
+      // Remove duplicate formatError: earlier definition includes i18n and is retained
 
       // Boot
       initSettings();
@@ -833,8 +831,9 @@
       ensureActive();
       applyLang();
       autoCollapseForMobile();
-      window.addEventListener('resize', autoCollapseForMobile);
-      window.addEventListener('orientationchange', autoCollapseForMobile);
+      const onViewportChange = debounce(autoCollapseForMobile, 150);
+      window.addEventListener('resize', onViewportChange);
+      window.addEventListener('orientationchange', onViewportChange);
     </script>
   </body>
   </html>
